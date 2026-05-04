@@ -64,8 +64,8 @@ python main.py \
     --device 0 \
     --logging "wandb+csv" \
     --init_seed 42 \
-     --eval_every 1 \
-    --lora_rank 16 \
+    --eval_every 1 \
+    --lora_rank $lora_rank \            # Default: 16 (GPT-2-XL), 32 (OPT-2.7B/LLaMA-3-8B), 64 (OPT-13B)
     --ema_gamma 0.9 \
     --inject_method intermit \
     --fine_sample_ratio $fsr \          # Default: 0.05
