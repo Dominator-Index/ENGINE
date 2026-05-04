@@ -82,14 +82,14 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         fine_sample_ratio: float = 0.2,  # Ratio of steps with fine residual
         use_fine_residual: bool = True,
         # v1.13 fixes based on expert analysis
-        tau_min: float = 0.5,  # τ 下界，防止 VMS 过早消失
-        tau_max: float = 1.0,  # τ 上界（方案2使用）
-        tau_scheme: str = 'adaptive',  # τ 计算方案: 'fixed', 'adaptive', 'ema'
-        tau_warmup_epochs: int = 0,  # τ warmup epochs (0=禁用)
-        lora_fp32: bool = True,  # LoRA 矩阵使用 FP32，避免 BF16 灾难性抵消
-        tau_lr_scale: bool = False,  # lr 感知 τ 缩放开关（默认关闭）
-        vms_lr_ref: float = 1e-5,  # lr 感知 τ 缩放的参考学习率
-        inject_method: str = 'continuous',  # VMS 注入方式: 'intermit'(仅fine_residual步) / 'continuous'(每步)
+        tau_min: float = 0.5,  # lower bound for τ
+        tau_max: float = 1.0,  # upper bound for τ
+        tau_scheme: str = 'adaptive',  # τ scheme: 'fixed', 'adaptive', 'ema'
+        tau_warmup_epochs: int = 0,  # τ warmup epochs (0=disabled)
+        lora_fp32: bool = True,  # keep LoRA matrices in FP32 to avoid BF16 cancellation
+        tau_lr_scale: bool = False,  # lr-aware τ scaling (default: off)
+        vms_lr_ref: float = 1e-5,  # reference lr for lr-aware τ scaling
+        inject_method: str = 'continuous',  # VMS injection: 'intermit' or 'continuous'
         # CT-LOREN (Curvature Transfer)
         curvature_transfer: bool = False,
         ct_interval: int = 5,
@@ -153,16 +153,16 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         self.fine_residual_interval = max(1, int(1.0 / fine_sample_ratio)) if fine_sample_ratio > 0 else 1
 
         # v1.13 fixes based on expert analysis
-        self.tau_min = tau_min  # τ 下界，防止 VMS 过早消失
-        self.tau_max = tau_max  # τ 上界（方案2使用）
-        self.tau_scheme = tau_scheme  # τ 计算方案: 'fixed', 'adaptive', 'ema'
-        self.tau_warmup_epochs = tau_warmup_epochs  # τ warmup epochs (0=禁用)
-        self._tau_current_epoch = 0  # 当前 epoch，用于 warmup 计算
-        self._cycle_start_epoch = 0  # 当前 cycle 开始时的 epoch，用于 per-cycle warmup
-        self.lora_fp32 = lora_fp32  # LoRA 矩阵使用 FP32，避免 BF16 灾难性抵消
-        self.tau_lr_scale = tau_lr_scale  # lr 感知 τ 缩放开关
-        self.vms_lr_ref = vms_lr_ref  # lr 感知 τ 缩放的参考学习率
-        self.inject_method = inject_method  # VMS 注入方式: 'intermit' / 'continuous'
+        self.tau_min = tau_min
+        self.tau_max = tau_max
+        self.tau_scheme = tau_scheme
+        self.tau_warmup_epochs = tau_warmup_epochs
+        self._tau_current_epoch = 0
+        self._cycle_start_epoch = 0
+        self.lora_fp32 = lora_fp32
+        self.tau_lr_scale = tau_lr_scale
+        self.vms_lr_ref = vms_lr_ref
+        self.inject_method = inject_method
 
         # CT-LOREN (Curvature Transfer)
         self.curvature_transfer = curvature_transfer

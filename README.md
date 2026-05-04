@@ -35,7 +35,7 @@ ENGINE treats the LoRA subspace as the resolved coarse scale and the full parame
 | `LOZO`    | Low-rank ZO gradient                                | [Chen et al., 2025, *Enhancing Zeroth-Order Fine-Tuning for Language Models with Low-Rank Structures*](https://openreview.net/pdf?id=9BiVepgmWW) |
 | `HiZOO`   | Hessian informed ZO                                 | [Zhao et al., 2025, *Second-Order Fine-Tuning without Pain for LLMs: A Hessian Informed Zeroth-Order Optimizer*](https://openreview.net/forum?id=bEqI61iBue) |
 | `LOREN`   | Low-rank curvature-aware ZO with variance reduction | Seung et al., 2026, *Low-Rank Curvature for Zeroth-Order Optimization in LLM Fine-Tuning* |
-| `ENGINE`(ours)   | ZO with VMS-EO correction | Zhuoli Ouyang et al., 2026, *ENGINE: Endogenous Variational MultiScale Optimization for Zeroth-Order LLM Fine-Tuning* |
+| `ENGINE`(ours)   | ZO with VMS-EO correction | Anonymous et al., 2026 |
 
 
 

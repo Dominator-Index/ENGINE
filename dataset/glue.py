@@ -98,7 +98,6 @@ class GLUEDataModule(L.LightningDataModule):
 
         self.eval_splits = [x for x in self.dataset.keys() if "validation" in x]
 
-        # 限制索引范围不超过实际数据集大小（修复IndexError）
         train_size = len(self.dataset["train"])
         self.subset_indices = list(range(min(self.sample_size, train_size)))
         
