@@ -98,7 +98,7 @@ def parse_arguments():
     # ENGINE 
     parser.add_argument('--lora_rank', type=int, default=8, help='LoRA rank for ENGINE')
     parser.add_argument('--ema_gamma', type=float, default=0.9, help='EMA smoothing coefficient for VMS feedback')
-    parser.add_argument('--fine_sample_ratio', type=float, default=0.2, help='Ratio of steps with fine residual (1/5 means every 5 steps)')
+    parser.add_argument('--fine_sample_ratio', type=float, default=0.05, help='Ratio of steps with fine residual (1/20 means every 20 steps)')
     parser.add_argument('--no_fine_residual', action='store_true', help='Disable fine grid residual feedback')
     parser.add_argument('--phase1_patience', type=int, default=50, help='Patience for Phase 1 -> Phase 2 transition (default: 50)')
     parser.add_argument('--phase3_epochs', type=int, default=50, help='Number of epochs for Phase 3 fine grid training')
@@ -147,125 +147,13 @@ def parse_arguments():
                         help='Disable all checkpoint saving (no best_coarse/best_fine/latest/vcycle_state). '
                              'Fastest mode, but resume is impossible after interruption')
     parser.add_argument('--oja_lr', type=float, default=0.1, help='Oja learning rate (decays as eta_0/(1+0.1*cycle))')
-    # FAS residual correction at restriction
-    parser.add_argument('--fas_correction', action='store_true', help='Enable FAS residual correction (B warm-start) at restriction')
-    parser.add_argument('--fas_alpha', type=float, default=0.5, help='Momentum scaling for B warm-start at restriction')
-    parser.add_argument('--fas_w0_alpha', type=float, default=0.0, help='W0 gradient correction step size at restriction (0=disable)')
+
     # Curvature multigrid cycle (evec_a ↔ evec_a_B/B bidirectional transfer)
     parser.add_argument('--curvature_multigrid', action='store_true',
                         help='Enable curvature multigrid: warm-start evec_a_B/B from evec_a at restriction, '
                              'and blend evec_a_B/B back into evec_a at prolongation')
     parser.add_argument('--curvature_mg_beta', type=float, default=0.3,
                         help='EMA blend coefficient for curvature prolongation (evec_a_B/B → evec_a)')
-    # FASLOREN
-    parser.add_argument('--fas_coarse_epochs', type=int, default=20, help='Coarse grid epochs per V-cycle')
-    parser.add_argument('--fas_fine_epochs', type=int, default=10, help='Fine grid epochs per V-cycle')
-    parser.add_argument('--fas_coarse_lr', type=float, default=1e-4, help='Coarse grid (LoRA) learning rate')
-    parser.add_argument('--fas_fine_lr', type=float, default=1e-5, help='Fine grid (LOREN) learning rate')
-    # HAM2SLOREN (adjoint per-layer learning rate)
-    parser.add_argument('--adjoint_mode', type=str, default='fast', choices=['none', 'fast'],
-                        help='Adjoint mode: none (no adjoint, baseline), fast (constant terminal condition)')
-    parser.add_argument('--adjoint_N', type=int, default=8, help='Adjoint Phase A: normal training steps')
-    parser.add_argument('--adjoint_T', type=int, default=8, help='Adjoint Phase B: frozen-alpha steps (recorded)')
-    parser.add_argument('--lr_alpha', type=float, default=0.01, help='Learning rate for per-layer alpha update')
-    parser.add_argument('--alpha_clip_min', type=float, default=0.1, help='Minimum alpha clipping value')
-    parser.add_argument('--alpha_clip_max', type=float, default=10.0, help='Maximum alpha clipping value')
-    # LHAM2SLOREN (per-type alpha + Adam for LoRA A)
-    parser.add_argument('--adam_lora_B', action='store_true', help='Use Adam optimizer for LoRA A matrix')
-    parser.add_argument('--adam_lora_B_beta2', type=float, default=0.999, help='Adam beta2 for LoRA A second moment')
-    parser.add_argument('--adam_lora_B_eps', type=float, default=1e-8, help='Adam epsilon for LoRA A')
-    parser.add_argument('--alpha_momentum_beta', type=float, default=0.0, help='Alpha momentum beta (0=no momentum)')
-    parser.add_argument('--reset_alpha_per_cycle', action='store_true', help='Reset alpha to 1.0 at each V-cycle boundary')
-    parser.add_argument('--alpha_inherit', action='store_true', help='Adapt alpha from per-type gradient norms (inherited across V-cycles)')
-    # TA-MIGSS (Terrain-Adaptive MIGSS)
-    parser.add_argument('--nq_lr_coupling', action='store_true',
-                        help='Scale ZO gradient by sqrt((nq-1)/(nq_ref-1)) to compensate step shrinkage at high nq')
-    parser.add_argument('--nq_ref', type=int, default=4, help='Reference nq for nq-lr coupling (default: 4)')
-    parser.add_argument('--auto_fine_lr', action='store_true',
-                        help='Auto-compute fine lr from eta_C/(c*sqrt(h/2r)) based on rank and hidden dim')
-    parser.add_argument('--auto_fine_lr_c', type=float, default=0.6,
-                        help='Safety coefficient c for auto fine lr (default: 0.6)')
-    parser.add_argument('--adaptive_patience', action='store_true',
-                        help='P2: End coarse phase when val_acc improvement velocity drops below threshold')
-    parser.add_argument('--adaptive_patience_threshold', type=float, default=0.05,
-                        help='P2: Min val_acc velocity (pp/epoch) to keep coarse phase running')
-    parser.add_argument('--adaptive_patience_min_epochs', type=int, default=8,
-                        help='P2: Minimum coarse epochs before adaptive patience can trigger')
-    parser.add_argument('--sigma_adaptive_lr', action='store_true',
-                        help='Modulate lr by clip(sigma_ema/sigma_f, 1/3, 3) based on ZO query variance')
-    # P5: Cross-V-cycle lr decay
-    parser.add_argument('--lr_decay', action='store_true',
-                        help='Enable cross-V-cycle lr decay when no global improvement')
-    parser.add_argument('--lr_decay_patience', type=int, default=3,
-                        help='V-cycles without improvement before lr decay')
-    parser.add_argument('--lr_decay_factor', type=float, default=0.5,
-                        help='Multiply lr by this factor on decay')
-    parser.add_argument('--lr_decay_min', type=float, default=1e-7,
-                        help='Minimum lr floor')
-    # P6: Val_acc velocity-based lr decay (legacy)
-    parser.add_argument('--acc_velocity_decay', action='store_true',
-                        help='P6: Decay lr when val_acc improvement velocity drops')
-    # P5-new: Exploration Boost — boost lr on plateau instead of decay
-    parser.add_argument('--exploration_boost', action='store_true',
-                        help='P5-new: Boost lr on plateau (exploration-first strategy)')
-    parser.add_argument('--boost_factor', type=float, default=1.5,
-                        help='P5-new: Multiply lr by this factor on plateau')
-    parser.add_argument('--boost_max_ratio', type=float, default=3.0,
-                        help='P5-new: Maximum lr boost ratio (lr <= initial_lr * ratio)')
-    parser.add_argument('--boost_max_count', type=int, default=3,
-                        help='P5-new: Max consecutive boosts before switching to convergence')
-    # Auto Warm Restart (AWR) — auto-detect stall and warm restart from best checkpoint
-    parser.add_argument('--auto_warm_restart', action='store_true',
-                        help='Enable automatic warm restart when training stalls')
-    parser.add_argument('--warm_restart_patience', type=int, default=3,
-                        help='AWR: V-cycles without global best improvement before warm restart')
-    parser.add_argument('--max_warm_restarts', type=int, default=3,
-                        help='AWR: Maximum number of warm restarts')
-    parser.add_argument('--warm_restart_lr_decay', action='store_true',
-                        help='AWR: Decay lr on warm restart')
-    parser.add_argument('--warm_restart_lr_factor', type=float, default=0.5,
-                        help='AWR: lr multiply factor on warm restart')
-    parser.add_argument('--warm_restart_lr_decay_after', type=int, default=1,
-                        help='AWR: Start decaying lr after this many warm restarts (0=always)')
-    parser.add_argument('--warm_restart_min_gain', type=float, default=0.0,
-                        help='AWR: Minimum accuracy gain (pp) per V-cycle to count as improvement (default: 0=any improvement)')
-    # Epoch-level lr decay (ReduceLROnPlateau within V-cycle phases)
-    parser.add_argument('--epoch_lr_decay', action='store_true',
-                        help='Enable epoch-level lr decay within coarse/fine phases')
-    parser.add_argument('--epoch_lr_patience', type=int, default=5,
-                        help='Epoch-level lr decay: epochs without improvement before decay (counted after warmup)')
-    parser.add_argument('--epoch_lr_factor', type=float, default=0.5,
-                        help='Epoch-level lr decay: multiply lr by this factor on plateau')
-    parser.add_argument('--epoch_lr_min_ratio', type=float, default=0.1,
-                        help='Epoch-level lr decay: min lr as ratio of phase-start lr (floor)')
-    parser.add_argument('--epoch_lr_warmup', type=int, default=3,
-                        help='Epoch-level lr decay: skip first N epochs of each phase (grid-switch settling)')
-    # Terrain Sensing (per-step fvar-based lr_mult, inspired by TA-LOREN)
-    parser.add_argument('--terrain_sensing', action='store_true',
-                        help='Enable per-step terrain sensing for lr modulation')
-    parser.add_argument('--ta_boost', type=float, default=0.005,
-                        help='Terrain sensing: lr boost rate on flat terrain')
-    parser.add_argument('--ta_brake', type=float, default=0.02,
-                        help='Terrain sensing: lr brake rate on steep terrain')
-    parser.add_argument('--ta_max_mult', type=float, default=2.0,
-                        help='Terrain sensing: max lr multiplier')
-    parser.add_argument('--ta_warmup', type=int, default=20,
-                        help='Terrain sensing: warmup steps for threshold calibration')
-    # CT-LOREN (Curvature Transfer)
-    parser.add_argument('--curvature_transfer', action='store_true', help='Enable CT-LOREN: transfer full-space curvature to LoRA')
-    parser.add_argument('--ct_interval', type=int, default=5, help='CT probe interval (every K steps)')
-    parser.add_argument('--ct_beta', type=float, default=0.2, help='CT mixing coefficient (0=no CT, 1=full replace)')
-    # Per-row preconditioner
-    parser.add_argument('--perrow_precond', action='store_true', help='Per-row independent preconditioner (each row of A/B has own curvature)')
-    # Adam for curvature ODE
-    parser.add_argument('--adam_cov', action='store_true', help='Use Adam optimizer for curvature ODE (adaptive lr_cov)')
-    parser.add_argument('--adam_cov_beta1', type=float, default=0.9, help='Adam beta1 for curvature ODE')
-    parser.add_argument('--adam_cov_beta2', type=float, default=0.999, help='Adam beta2 for curvature ODE')
-    # lr_cov schedule
-    parser.add_argument('--lr_cov_schedule', type=str, default='constant', choices=['constant', 'warmup_cosine'],
-                        help='lr_cov schedule: constant (default), warmup_cosine (warmup then cosine decay)')
-    parser.add_argument('--lr_cov_warmup_epochs', type=int, default=20, help='lr_cov warmup epochs')
-    parser.add_argument('--lr_cov_min', type=float, default=None, help='Minimum lr_cov for decay (default: 0.1 * lr_cov)')
 
     args = parser.parse_args()
     return args
