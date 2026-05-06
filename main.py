@@ -108,9 +108,9 @@ def parse_arguments():
     parser.add_argument('--phase3_checkpoint_interval', type=int, default=20, help='Phase 3 checkpoint interval (default: 20, saves full model)')
     parser.add_argument('--absorption_interval', type=int, default=0,
                         help='Periodic LoRA absorption every N epochs (0=disabled). Multi V-cycle.')
-    parser.add_argument('--vcycle_coarse_epochs', type=int, default=0,
+    parser.add_argument('--vcycle_coarse_epochs', type=int, default=60,
                         help='Coarse grid epochs per V-cycle (0=disabled, use old 3-phase flow)')
-    parser.add_argument('--vcycle_fine_epochs', type=int, default=0,
+    parser.add_argument('--vcycle_fine_epochs', type=int, default=60,
                         help='Fine grid epochs per V-cycle (0=disabled)')
     parser.add_argument('--coarse_isotropic', action='store_true', default=True,
                         help='Use isotropic perturbation on coarse grid (default: True)')
@@ -121,19 +121,19 @@ def parse_arguments():
                         help='Custom checkpoint directory (default: {results}/{model}/{task}/EVVMS_checkpoints)')
     parser.add_argument('--resume_epoch', type=int, default=0, help='Epoch number to resume from (for logging)')
     # v1.13 fixes
-    parser.add_argument('--tau_min', type=float, default=0.5, help='Minimum τ value to prevent VMS vanishing (v1.13)')
-    parser.add_argument('--tau_max', type=float, default=1.0, help='Maximum τ value (for adaptive scheme)')
+    parser.add_argument('--tau_min', type=float, default=0.3, help='Minimum τ value to prevent VMS vanishing (v1.13)')
+    parser.add_argument('--tau_max', type=float, default=0.8, help='Maximum τ value (for adaptive scheme)')
     parser.add_argument('--tau_scheme', type=str, default='adaptive', choices=['fixed', 'adaptive', 'ema'],
                         help='τ computation scheme: fixed (constant tau_min), adaptive (curvature discrepancy), ema (smoothed adaptive)')
-    parser.add_argument('--tau_warmup_epochs', type=int, default=0,
+    parser.add_argument('--tau_warmup_epochs', type=int, default=30,
                         help='τ warmup epochs: τ_effective = τ × min(1, epoch/warmup_epochs). 0=disabled')
     parser.add_argument('--no_lora_fp32', action='store_true', help='Disable FP32 for LoRA matrices (use model dtype)')
     parser.add_argument('--tau_lr_scale', action='store_true', help='Enable lr-aware τ scaling: τ *= sqrt(lr_ref/lr) when lr > lr_ref')
     parser.add_argument('--vms_lr_ref', type=float, default=1e-5, help='Reference learning rate for lr-aware τ scaling')
-    parser.add_argument('--inject_method', type=str, default='continuous', choices=['intermit', 'continuous'],
+    parser.add_argument('--inject_method', type=str, default='intermit', choices=['intermit', 'continuous'],
                         help='VMS injection method: intermit (only when compute_fine_residual runs), continuous (every step using cached EMA)')
     # LoRA basis selection + B-only coarse grid
-    parser.add_argument('--basis_method', type=str, default='random',
+    parser.add_argument('--basis_method', type=str, default='reuse',
                         choices=['random', 'oja', 'svd', 'svd_hybrid', 'online_oja', 'reuse'],
                         help='LoRA A basis selection: random, oja, svd (SVD of momentum), svd_hybrid (evec_a + SVD), online_oja')
     parser.add_argument('--svd_momentum_ema', type=float, default=0.0,
