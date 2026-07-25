@@ -117,6 +117,10 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         # Curvature multigrid cycle (evec_a ↔ evec_a_B/B bidirectional transfer)
         curvature_multigrid: bool = False,
         curvature_mg_beta: float = 0.3,  # EMA blend coefficient for prolongation (evec_a_B/B → evec_a)
+        alignment_diag: bool = False,
+        alignment_diag_interval: int = 100,
+        alignment_fd_radius: float = 1e-3,
+        alignment_kappa_delta: float = 1e-12,
         **kwargs,
     ):
         super().__init__(
@@ -206,6 +210,10 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         # Curvature multigrid cycle
         self.curvature_multigrid = curvature_multigrid
         self.curvature_mg_beta = curvature_mg_beta
+        self.alignment_diag = alignment_diag
+        self.alignment_diag_interval = max(1, alignment_diag_interval)
+        self.alignment_fd_radius = alignment_fd_radius
+        self.alignment_kappa_delta = alignment_kappa_delta
 
         # Gradient SVD diagnostic (disabled: diagnostics complete)
         self._grad_svd_diagnostic = False
@@ -944,7 +952,73 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         return ct_diag
 
     @torch.no_grad()
-    def evvms_zo_update(self, random_seeds, fvals, fmean, c_f_dict=None, c_f_prime_dict=None):
+    def _deprecondition_coarse_direction(self, coarse_B, coarse_A, evec_B, evec_A):
+        """Invert the normalized rank-one LOREN covariance without dense matrices."""
+        h_B, h_A = {}, {}
+        for name in coarse_B:
+            g_B, g_A = coarse_B[name], coarse_A[name]
+            a_B, a_A = evec_B[name], evec_A[name]
+            if self.perrow_precond:
+                h_B[name] = g_B + ((a_B * g_B).sum(1, keepdim=True) / self.damping) * a_B
+                h_A[name] = g_A + ((a_A * g_A).sum(1, keepdim=True) / self.damping) * a_A
+            else:
+                b = a_B.view(1, -1).expand_as(g_B).reshape(-1)
+                a = a_A.view(1, -1).expand_as(g_A).reshape(-1)
+                h_B[name] = (g_B.reshape(-1) + torch.dot(b, g_B.reshape(-1)) * b / self.damping).view_as(g_B)
+                h_A[name] = (g_A.reshape(-1) + torch.dot(a, g_A.reshape(-1)) * a / self.damping).view_as(g_A)
+        return h_B, h_A
+
+    @torch.no_grad()
+    def _measure_engine_alignment(self, model, batch, direction_B, direction_A, h_B, h_A):
+        """Measure the pre-momentum ENGINE direction with two central-difference queries."""
+        device = next(iter(direction_B.values())).device
+        norm_sq = torch.zeros((), device=device, dtype=torch.float32)
+        h_norm_sq = torch.zeros_like(norm_sq)
+        for value in list(direction_B.values()) + list(direction_A.values()):
+            norm_sq.add_(value.float().square().sum())
+        for value in list(h_B.values()) + list(h_A.values()):
+            h_norm_sq.add_(value.float().square().sum())
+        direction_norm = norm_sq.sqrt()
+        if not torch.isfinite(direction_norm) or direction_norm.item() <= 1e-12:
+            return None
+        inv_norm = direction_norm.reciprocal()
+        unit_B = {name: value * inv_norm.to(value.dtype) for name, value in direction_B.items()}
+        unit_A = {name: value * inv_norm.to(value.dtype) for name, value in direction_A.items()}
+        original_B = {name: value.clone() for name, value in self.lora_B.items()}
+        original_A = {name: value.clone() for name, value in self.lora_A.items()}
+        params = dict(self.params)
+
+        def set_offset(offset):
+            for name in self.lora_B:
+                B, A, param = self.lora_B[name], self.lora_A[name], params[name]
+                old_delta = B @ A
+                B.copy_(original_B[name]).add_(unit_B[name], alpha=offset)
+                A.copy_(original_A[name]).add_(unit_A[name], alpha=offset)
+                diff = B @ A - old_delta
+                param.add_(diff.view(param.shape) if param.ndim > 2 else diff)
+
+        try:
+            set_offset(self.alignment_fd_radius)
+            loss_plus = self.zo_forward_memory_eff(model, batch).item()
+            set_offset(-self.alignment_fd_radius)
+            loss_minus = self.zo_forward_memory_eff(model, batch).item()
+        finally:
+            set_offset(0.0)
+        derivative = (loss_plus - loss_minus) / (2.0 * self.alignment_fd_radius)
+        alignment = direction_norm.item() * derivative
+        return {
+            "proxy": alignment,
+            "kappa_proxy": alignment / (h_norm_sq.item() + self.alignment_kappa_delta),
+            "directional_derivative": derivative,
+            "direction_norm": direction_norm.item(),
+            "h_proxy_norm_sq": h_norm_sq.item(),
+            "loss_plus": loss_plus,
+            "loss_minus": loss_minus,
+        }
+
+    @torch.no_grad()
+    def evvms_zo_update(self, random_seeds, fvals, fmean, c_f_dict=None, c_f_prime_dict=None,
+                        model=None, alignment_batch=None, measure_alignment=False):
         """
         EV-VMS RLOO update on LoRA parameters with per-branch Curvature-VMS feedback.
 
@@ -966,6 +1040,9 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         num_queries_inv = 1.0 / (self.num_queries - 1)
         eps_inv = 1.0 / (self.zero_order_eps * (self.num_queries - 1))
         lr_cov_now = self._get_lr_cov()
+        if measure_alignment:
+            evec_B_snapshot = {name: value.clone() for name, value in self.evec_a_B.items()}
+            evec_A_snapshot = {name: value.clone() for name, value in self.evec_a_A.items()}
 
         # Accumulators for gradient
         grad_B_accum = {name: torch.zeros_like(A) for name, A in self.lora_B.items()}
@@ -1062,6 +1139,10 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
                     else:
                         self.evec_a_B[name].add_(ak_grad_B, alpha=-lr_cov_now)
                         self.evec_a_A[name].add_(ak_grad_A, alpha=-lr_cov_now)
+
+        if measure_alignment:
+            coarse_B = {name: value.clone() for name, value in grad_B_accum.items()}
+            coarse_A = {name: value.clone() for name, value in grad_A_accum.items()}
 
         # Adam update for curvature ODE: one step using averaged gradient
         if self.adam_cov:
@@ -1233,6 +1314,17 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
                 self._last_vms_diag['adj_ratio_B'].append(adj_ratio_B)
                 self._last_vms_diag['adj_ratio_A'].append(adj_ratio_A)
 
+        alignment_queries = 0
+        self._last_alignment_diag = None
+        if measure_alignment and model is not None and alignment_batch is not None:
+            h_B, h_A = self._deprecondition_coarse_direction(
+                coarse_B, coarse_A, evec_B_snapshot, evec_A_snapshot
+            )
+            self._last_alignment_diag = self._measure_engine_alignment(
+                model, alignment_batch, grad_B_accum, grad_A_accum, h_B, h_A
+            )
+            alignment_queries = 2 if self._last_alignment_diag is not None else 0
+
         # Save old LoRA values before SGD update (for incremental update)
         old_B = {name: B.clone() for name, B in self.lora_B.items()}
         old_A = {name: A.clone() for name, A in self.lora_A.items()}
@@ -1250,6 +1342,7 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         # Apply incremental LoRA update to model params
         # param += (new_B @ new_A) - (old_B @ old_A)
         self._update_lora_in_params(old_B, old_A)
+        return alignment_queries
 
     @torch.no_grad()
     def _log_gradient_svd(self, m_before):
@@ -1361,6 +1454,9 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         start_time = time.perf_counter()
         random_seeds = [np.random.randint(1000000000) for _ in range(self.num_queries)]
         log_dict = kwargs.get('log', {})
+        for key in list(log_dict):
+            if key.startswith('alignment_'):
+                log_dict.pop(key)
 
         # Clear stale tau values from previous step (only log fresh values from this step's SPSA)
         if hasattr(self, '_last_tau_values'):
@@ -1407,7 +1503,15 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
                 ct_queries = 4  # 2 SPSA queries × 2 forward passes (two-sided)
 
         # EV-VMS update with Curvature-VMS
-        self.evvms_zo_update(random_seeds, fvals, fmean, c_f_dict, c_f_prime_dict)
+        measure_alignment = (
+            self.alignment_diag
+            and self.get_phase() == 'coarse'
+            and self.state.global_training_steps % self.alignment_diag_interval == 0
+        )
+        alignment_queries = self.evvms_zo_update(
+            random_seeds, fvals, fmean, c_f_dict, c_f_prime_dict,
+            model=model, alignment_batch=batch, measure_alignment=measure_alignment
+        )
         self.state.global_training_steps += 1
 
         # Store fvals for subclass terrain sensing
@@ -1417,10 +1521,24 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         total_time = time.perf_counter() - start_time
         self.state.time.append(total_time)
         # Query count = number of forward passes (NOT multiplied by batch size)
-        self.state.query.append(self.num_queries + fine_grid_queries + ct_queries)
+        self.state.query.append(
+            self.num_queries + fine_grid_queries + ct_queries + alignment_queries
+        )
 
         log_dict['train_loss'] = fmean
         log_dict['time'] = total_time
+        if self._last_alignment_diag:
+            diag = self._last_alignment_diag
+            log_dict['alignment_proxy'] = diag['proxy']
+            log_dict['alignment_kappa_proxy'] = diag['kappa_proxy']
+            log_dict['alignment_positive'] = float(diag['proxy'] > 0.0)
+            log_dict['alignment_directional_derivative'] = diag['directional_derivative']
+            log_dict['alignment_direction_norm'] = diag['direction_norm']
+            log_dict['alignment_h_proxy_norm_sq'] = diag['h_proxy_norm_sq']
+            log_dict['alignment_loss_plus'] = diag['loss_plus']
+            log_dict['alignment_loss_minus'] = diag['loss_minus']
+            log_dict['alignment_fd_radius'] = self.alignment_fd_radius
+            log_dict['alignment_queries'] = alignment_queries
 
         # VMS diagnostic logging
         if hasattr(self, 'c_f_ema') and self.c_f_ema:

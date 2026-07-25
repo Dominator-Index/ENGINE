@@ -154,6 +154,14 @@ def parse_arguments():
                              'and blend evec_a_B/B back into evec_a at prolongation')
     parser.add_argument('--curvature_mg_beta', type=float, default=0.3,
                         help='EMA blend coefficient for curvature prolongation (evec_a_B/B → evec_a)')
+    parser.add_argument('--alignment_diag', action='store_true',
+                        help='Measure the pre-momentum ENGINE alignment proxy during coarse training')
+    parser.add_argument('--alignment_diag_interval', type=int, default=100,
+                        help='Measure ENGINE alignment every N coarse steps')
+    parser.add_argument('--alignment_fd_radius', type=float, default=1e-3,
+                        help='Central finite-difference radius along the normalized LoRA direction')
+    parser.add_argument('--alignment_kappa_delta', type=float, default=1e-12,
+                        help='Numerical stabilizer in the alignment kappa-proxy denominator')
 
     args = parser.parse_args()
     return args

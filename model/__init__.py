@@ -108,5 +108,9 @@ def get_model(args, dm):
         coarse_isotropic=getattr(args, 'coarse_isotropic', True),
         evec_a_diagnostic=getattr(args, 'evec_a_diagnostic', False),
         evec_a_diag_interval=getattr(args, 'evec_a_diag_interval', 1),
+        alignment_diag=getattr(args, 'alignment_diag', False),
+        alignment_diag_interval=getattr(args, 'alignment_diag_interval', 100),
+        alignment_fd_radius=getattr(args, 'alignment_fd_radius', 1e-3),
+        alignment_kappa_delta=getattr(args, 'alignment_kappa_delta', 1e-12),
     )
     return transformer
