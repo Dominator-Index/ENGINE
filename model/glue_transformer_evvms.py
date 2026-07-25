@@ -736,6 +736,59 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         self.lora_applied = True
 
     @torch.no_grad()
+    def _reconstruct_frozen_coarse_direction(self, random_seeds, fvals, fmean,
+                                             evec_B, evec_A):
+        """Rebuild a diagnostic-only coarse RLOO direction from frozen curvature."""
+        device = next(iter(self.lora_B.values())).device
+        fweight = torch.tensor(fvals, device=device) - fmean
+        eps_inv = 1.0 / (self.zero_order_eps * (self.num_queries - 1))
+        coarse_B = {name: torch.zeros_like(B) for name, B in self.lora_B.items()}
+        coarse_A = {name: torch.zeros_like(A) for name, A in self.lora_A.items()}
+        cuda_devices = sorted({value.device.index for value in self.lora_B.values()
+                               if value.device.type == "cuda"})
+
+        # This replay is isolated so enabling diagnostics cannot affect training RNG.
+        with torch.random.fork_rng(devices=cuda_devices):
+            for k, seed in enumerate(random_seeds):
+                torch.manual_seed(seed)
+                for name in self.lora_B:
+                    B, A = self.lora_B[name], self.lora_A[name]
+                    a_B, a_A = evec_B[name], evec_A[name]
+                    m, r = B.shape
+                    _, n = A.shape
+                    if self.perrow_precond:
+                        u_B = torch.randn(m, r, device=B.device, dtype=B.dtype)
+                        sq_norm_B = (a_B * a_B).sum(dim=1, keepdim=True)
+                        dot_au_B = (a_B * u_B).sum(dim=1, keepdim=True)
+                        damp_sq_B = torch.sqrt(self.damping + sq_norm_B)
+                        perturb_B = u_B - (self.d_sqrt + damp_sq_B) * dot_au_B * a_B / (
+                            sq_norm_B * damp_sq_B + 1e-8)
+                        u_A = torch.randn(r, n, device=A.device, dtype=A.dtype)
+                        sq_norm_A = (a_A * a_A).sum(dim=1, keepdim=True)
+                        dot_au_A = (a_A * u_A).sum(dim=1, keepdim=True)
+                        damp_sq_A = torch.sqrt(self.damping + sq_norm_A)
+                        perturb_A = u_A - (self.d_sqrt + damp_sq_A) * dot_au_A * a_A / (
+                            sq_norm_A * damp_sq_A + 1e-8)
+                    else:
+                        a_B_flat = a_B.view(1, -1).expand(m, -1).reshape(-1)
+                        u_B_flat = torch.randn(m * r, device=B.device, dtype=B.dtype)
+                        sq_norm_B = torch.dot(a_B_flat, a_B_flat)
+                        dot_au_B = torch.dot(a_B_flat, u_B_flat)
+                        damp_sq_B = math.sqrt(self.damping + sq_norm_B.item())
+                        perturb_B = (u_B_flat - (self.d_sqrt + damp_sq_B) * dot_au_B * a_B_flat /
+                                      (sq_norm_B * damp_sq_B + 1e-8)).view(m, r)
+                        a_A_flat = a_A.view(1, -1).expand(r, -1).reshape(-1)
+                        u_A_flat = torch.randn(r * n, device=A.device, dtype=A.dtype)
+                        sq_norm_A = torch.dot(a_A_flat, a_A_flat)
+                        dot_au_A = torch.dot(a_A_flat, u_A_flat)
+                        damp_sq_A = math.sqrt(self.damping + sq_norm_A.item())
+                        perturb_A = (u_A_flat - (self.d_sqrt + damp_sq_A) * dot_au_A * a_A_flat /
+                                      (sq_norm_A * damp_sq_A + 1e-8)).view(r, n)
+                    coarse_B[name].add_(perturb_B, alpha=fweight[k] * eps_inv)
+                    coarse_A[name].add_(perturb_A, alpha=fweight[k] * eps_inv)
+        return coarse_B, coarse_A
+
+    @torch.no_grad()
     def compute_fine_residual(self, model, batch, random_seeds: list):
         """
         Compute fine grid residual using RLOO with num_queries forward passes.
@@ -1018,7 +1071,8 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
 
     @torch.no_grad()
     def evvms_zo_update(self, random_seeds, fvals, fmean, c_f_dict=None, c_f_prime_dict=None,
-                        model=None, alignment_batch=None, measure_alignment=False):
+                        model=None, alignment_batch=None, measure_alignment=False,
+                        alignment_evec_B=None, alignment_evec_A=None):
         """
         EV-VMS RLOO update on LoRA parameters with per-branch Curvature-VMS feedback.
 
@@ -1040,10 +1094,6 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         num_queries_inv = 1.0 / (self.num_queries - 1)
         eps_inv = 1.0 / (self.zero_order_eps * (self.num_queries - 1))
         lr_cov_now = self._get_lr_cov()
-        if measure_alignment:
-            evec_B_snapshot = {name: value.clone() for name, value in self.evec_a_B.items()}
-            evec_A_snapshot = {name: value.clone() for name, value in self.evec_a_A.items()}
-
         # Accumulators for gradient
         grad_B_accum = {name: torch.zeros_like(A) for name, A in self.lora_B.items()}
         grad_A_accum = {name: torch.zeros_like(B) for name, B in self.lora_A.items()}
@@ -1139,10 +1189,6 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
                     else:
                         self.evec_a_B[name].add_(ak_grad_B, alpha=-lr_cov_now)
                         self.evec_a_A[name].add_(ak_grad_A, alpha=-lr_cov_now)
-
-        if measure_alignment:
-            coarse_B = {name: value.clone() for name, value in grad_B_accum.items()}
-            coarse_A = {name: value.clone() for name, value in grad_A_accum.items()}
 
         # Adam update for curvature ODE: one step using averaged gradient
         if self.adam_cov:
@@ -1317,8 +1363,11 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         alignment_queries = 0
         self._last_alignment_diag = None
         if measure_alignment and model is not None and alignment_batch is not None:
+            coarse_B, coarse_A = self._reconstruct_frozen_coarse_direction(
+                random_seeds, fvals, fmean, alignment_evec_B, alignment_evec_A
+            )
             h_B, h_A = self._deprecondition_coarse_direction(
-                coarse_B, coarse_A, evec_B_snapshot, evec_A_snapshot
+                coarse_B, coarse_A, alignment_evec_B, alignment_evec_A
             )
             self._last_alignment_diag = self._measure_engine_alignment(
                 model, alignment_batch, grad_B_accum, grad_A_accum, h_B, h_A
@@ -1462,6 +1511,17 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
         if hasattr(self, '_last_tau_values'):
             self._last_tau_values = {}
 
+        measure_alignment = (
+            self.alignment_diag
+            and self.get_phase() == 'coarse'
+            and self.state.global_training_steps % self.alignment_diag_interval == 0
+        )
+        if measure_alignment:
+            alignment_evec_B = {name: value.clone() for name, value in self.evec_a_B.items()}
+            alignment_evec_A = {name: value.clone() for name, value in self.evec_a_A.items()}
+        else:
+            alignment_evec_B = alignment_evec_A = None
+
         # Ensure LoRA is applied
         self._apply_lora_to_params()
 
@@ -1503,14 +1563,10 @@ class GLUETransformerEVVMS(GLUETransformerLOREN):
                 ct_queries = 4  # 2 SPSA queries × 2 forward passes (two-sided)
 
         # EV-VMS update with Curvature-VMS
-        measure_alignment = (
-            self.alignment_diag
-            and self.get_phase() == 'coarse'
-            and self.state.global_training_steps % self.alignment_diag_interval == 0
-        )
         alignment_queries = self.evvms_zo_update(
             random_seeds, fvals, fmean, c_f_dict, c_f_prime_dict,
-            model=model, alignment_batch=batch, measure_alignment=measure_alignment
+            model=model, alignment_batch=batch, measure_alignment=measure_alignment,
+            alignment_evec_B=alignment_evec_B, alignment_evec_A=alignment_evec_A
         )
         self.state.global_training_steps += 1
 
