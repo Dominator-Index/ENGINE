@@ -22,7 +22,8 @@ def parse_arguments():
                         help='Name of the pre-trained model')
     parser.add_argument('--task', type=str, default='mnli', help='Task for model training')
     parser.add_argument('--algorithm', type=str, default='MeZO', help='Algorithm to use',
-                        choices=["FOSGD", "FOAdam", "MeZO", "ZOAdam", "ZOSVRG", "LOZO", "HiZOO", "LOREN", "AdaSmooth", "ENGINE"])
+                        choices=["FOSGD", "FOAdam", "MeZO", "ZOAdam", "ZOSVRG", "LOZO",
+                                 "SubZero", "HiZOO", "LOREN", "AdaSmooth", "ENGINE"])
     parser.add_argument('--device', type=int, default=0, help='GPU Number')
     parser.add_argument('--results', type=str, default='results_demo',
                         help='Name of folder to store results')
@@ -78,9 +79,10 @@ def parse_arguments():
     parser.add_argument('--eps', type=float, default=1e-8, help='the level of adaptivity (eps for adam)')
     parser.add_argument('--low_bit_adam', type=int, default=0,
                         help='Use Adam with quantized states; options: 4 or 8')
-    # LOZO
-    parser.add_argument('--rank', type=int, default=2, help='rank of U and V')
-    parser.add_argument('--step_interval', type=int, default=50, help='frequency of updating matrix V')
+    # Low-rank ZO methods
+    parser.add_argument('--rank', type=int, default=2, help='rank of low-rank ZO directions')
+    parser.add_argument('--step_interval', type=int, default=50,
+                        help='frequency of updating the low-rank subspace')
     # HiZOO
     parser.add_argument('--hessian_smooth_type', type=str, default="constant1e-8",
                         help="hessian smooth type")
@@ -216,7 +218,7 @@ if __name__ == "__main__":
         args.run_name += f'_eps_{args.eps:.0e}'
         if args.low_bit_adam == 4 or args.low_bit_adam == 8:
             args.run_name += f'_{args.low_bit_adam}bit'
-    elif args.algorithm == 'LOZO':
+    elif args.algorithm in ('LOZO', 'SubZero'):
         args.run_name += f'_rank_{args.rank}_step-interval_{args.step_interval}'
     elif args.algorithm == 'HiZOO':
         args.run_name += f'_hessian_smooth-{args.hessian_smooth_type}'

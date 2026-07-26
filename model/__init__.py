@@ -4,6 +4,7 @@ from .glue_transformer_mezo import GLUETransformerMeZo
 from .glue_transformer_svrg import GLUETransformerMeZoSVRG
 from .glue_transformer_adam import GLUETransformerMeZoAdam
 from .glue_transformer_lozo import GLUETransformerLoZo
+from .glue_transformer_subzero import GLUETransformerSubZero
 from .glue_transformer_hizoo import GLUETransformerHiZOO
 from .glue_transformer_loren import GLUETransformerLOREN
 from .glue_transformer_adasmooth import GLUETransformerAdaSmooth
@@ -17,6 +18,7 @@ from .prompt_finetune import (RobertaModelForPromptFinetuning, OPTModelForPrompt
 __all__ = ['GLUETransformer', 'GLUETransformerMeZo',
            'GLUETransformerMeZoSVRG', 'GLUETransformerMeZoAdam',
            'GLUETransformerHiZOO', 'GLUETransformerLOREN', 'GLUETransformerAdaSmooth',
+           'GLUETransformerSubZero',
            'GLUETransformerEVVMS', 
            'RobertaPreTrainedModel', 'RobertaModel', 'RobertaLMHead',
            'RobertaModelForPromptFinetuning', 'RobertaConfig', 'OPTModelForPromptFinetuning',
@@ -30,6 +32,7 @@ model_class = {
     'ZOSVRG': GLUETransformerMeZoSVRG,
     'ZOAdam': GLUETransformerMeZoAdam,
     'LOZO': GLUETransformerLoZo,
+    'SubZero': GLUETransformerSubZero,
     'HiZOO': GLUETransformerHiZOO,
     'LOREN': GLUETransformerLOREN,
     'AdaSmooth': GLUETransformerAdaSmooth,
