@@ -36,6 +36,7 @@ class TrainState:
         self.lr_list = []
         self.memory_usage = []
         self.global_training_steps = 0
+        self.num_forward_passes = 0
         self.learning_rate = 0
         self.learning_rate_aux = 0
         self.full_grad = None

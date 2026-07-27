@@ -23,7 +23,8 @@ def parse_arguments():
     parser.add_argument('--task', type=str, default='mnli', help='Task for model training')
     parser.add_argument('--algorithm', type=str, default='MeZO', help='Algorithm to use',
                         choices=["FOSGD", "FOAdam", "MeZO", "ZOAdam", "ZOSVRG", "LOZO",
-                                 "SubZero", "HiZOO", "LOREN", "AdaSmooth", "ENGINE"])
+                                 "SubZero", "AGZO", "ZO-GV", "ZO-Muon", "HiZOO", "LOREN",
+                                 "AdaSmooth", "ENGINE"])
     parser.add_argument('--device', type=int, default=0, help='GPU Number')
     parser.add_argument('--results', type=str, default='results_demo',
                         help='Name of folder to store results')
@@ -57,6 +58,8 @@ def parse_arguments():
                         'If val_acc does not improve for this many fine epochs, advance to next V-cycle.')
     parser.add_argument('--num_queries', type=int, default=10,
                         help='Number of queries to evaluate in large batch update')
+    parser.add_argument('--gv_split_ratio', type=float, default=0.5,
+                        help='Fraction of ZO-GV candidates in each low/high loss group')
     # experiment
     parser.add_argument('--soft_prompt', action='store_true', help='True for using soft prompt')
     parser.add_argument('--save_ckpt', action='store_true', help='Save checkpoint')
@@ -83,6 +86,10 @@ def parse_arguments():
     parser.add_argument('--rank', type=int, default=2, help='rank of low-rank ZO directions')
     parser.add_argument('--step_interval', type=int, default=50,
                         help='frequency of updating the low-rank subspace')
+    parser.add_argument('--agzo_power_iter_steps', type=int, default=5,
+                        help='Block power-iteration steps for AGZO activation bases')
+    parser.add_argument('--zomuon_nonmatrix_lr', type=float, default=1e-7,
+                        help='Learning rate for ZO-Muon non-matrix parameters')
     # HiZOO
     parser.add_argument('--hessian_smooth_type', type=str, default="constant1e-8",
                         help="hessian smooth type")
@@ -220,6 +227,15 @@ if __name__ == "__main__":
             args.run_name += f'_{args.low_bit_adam}bit'
     elif args.algorithm in ('LOZO', 'SubZero'):
         args.run_name += f'_rank_{args.rank}_step-interval_{args.step_interval}'
+    elif args.algorithm == 'AGZO':
+        args.run_name += f'_rank_{args.rank}_power-steps_{args.agzo_power_iter_steps}'
+    elif args.algorithm == 'ZO-GV':
+        args.run_name += f'_alpha-{args.gv_split_ratio:g}'
+    elif args.algorithm == 'ZO-Muon':
+        args.run_name += (
+            f'_rank_{args.rank}_step-interval_{args.step_interval}'
+            f'_nonmatrix-lr_{args.zomuon_nonmatrix_lr:.0e}'
+        )
     elif args.algorithm == 'HiZOO':
         args.run_name += f'_hessian_smooth-{args.hessian_smooth_type}'
     elif args.algorithm == 'LOREN':

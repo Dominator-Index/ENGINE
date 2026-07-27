@@ -5,6 +5,9 @@ from .glue_transformer_svrg import GLUETransformerMeZoSVRG
 from .glue_transformer_adam import GLUETransformerMeZoAdam
 from .glue_transformer_lozo import GLUETransformerLoZo
 from .glue_transformer_subzero import GLUETransformerSubZero
+from .glue_transformer_agzo import GLUETransformerAGZO
+from .glue_transformer_zogv import GLUETransformerZOGV
+from .glue_transformer_zomuon import GLUETransformerZOMuon
 from .glue_transformer_hizoo import GLUETransformerHiZOO
 from .glue_transformer_loren import GLUETransformerLOREN
 from .glue_transformer_adasmooth import GLUETransformerAdaSmooth
@@ -18,7 +21,8 @@ from .prompt_finetune import (RobertaModelForPromptFinetuning, OPTModelForPrompt
 __all__ = ['GLUETransformer', 'GLUETransformerMeZo',
            'GLUETransformerMeZoSVRG', 'GLUETransformerMeZoAdam',
            'GLUETransformerHiZOO', 'GLUETransformerLOREN', 'GLUETransformerAdaSmooth',
-           'GLUETransformerSubZero',
+           'GLUETransformerSubZero', 'GLUETransformerAGZO', 'GLUETransformerZOGV',
+           'GLUETransformerZOMuon',
            'GLUETransformerEVVMS', 
            'RobertaPreTrainedModel', 'RobertaModel', 'RobertaLMHead',
            'RobertaModelForPromptFinetuning', 'RobertaConfig', 'OPTModelForPromptFinetuning',
@@ -33,6 +37,9 @@ model_class = {
     'ZOAdam': GLUETransformerMeZoAdam,
     'LOZO': GLUETransformerLoZo,
     'SubZero': GLUETransformerSubZero,
+    'AGZO': GLUETransformerAGZO,
+    'ZO-GV': GLUETransformerZOGV,
+    'ZO-Muon': GLUETransformerZOMuon,
     'HiZOO': GLUETransformerHiZOO,
     'LOREN': GLUETransformerLOREN,
     'AdaSmooth': GLUETransformerAdaSmooth,
@@ -66,6 +73,9 @@ def get_model(args, dm):
         damping=args.damping,
         lr_cov=args.lr_cov,
         num_queries=args.num_queries,
+        agzo_power_iter_steps=getattr(args, 'agzo_power_iter_steps', 5),
+        gv_split_ratio=getattr(args, 'gv_split_ratio', 0.5),
+        zomuon_nonmatrix_lr=getattr(args, 'zomuon_nonmatrix_lr', 1e-7),
         clipping=args.clipping,
         hessian_smooth_type=args.hessian_smooth_type,
         num_epochs=args.epochs,

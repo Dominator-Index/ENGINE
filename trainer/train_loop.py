@@ -18,7 +18,7 @@ def reset_log_dict(log_dict):
     for k in ('train_loss', 'val_loss', 'val_acc', 'time'):
         log_dict.pop(k, None)
     for k in list(log_dict):
-        if k.startswith('subzero_'):
+        if k.startswith(('subzero_', 'agzo_', 'zogv_', 'zomuon_')):
             log_dict.pop(k, None)
 
 def finetune_FO(args,
