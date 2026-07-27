@@ -15,6 +15,7 @@ export CUDA_VISIBLE_DEVICES=1
 export HF_ENDPOINT=https://hf-mirror.com
 export HF_HUB_OFFLINE=1
 export WANDB_MODE=online
+export WANDB_PROJECT=ENGINE
 MODEL="gpt2-xl"
 TASK="mnli"
 ALGORITHM="AGZO"
