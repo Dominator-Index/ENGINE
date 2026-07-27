@@ -14,6 +14,7 @@ export CUDA_VISIBLE_DEVICES=1
 # Hugging Face Mirror (for faster downloads in China)
 export HF_ENDPOINT=https://hf-mirror.com
 export HF_HUB_OFFLINE=1
+export WANDB_MODE=online
 MODEL="gpt2-xl"
 TASK="mnli"
 ALGORITHM="ZO-Muon"

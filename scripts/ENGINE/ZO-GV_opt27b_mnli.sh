@@ -7,6 +7,7 @@ cd "$SCRIPT_DIR/../.." || exit 1
 export CUDA_VISIBLE_DEVICES=0
 export HF_ENDPOINT=https://hf-mirror.com
 export HF_HUB_OFFLINE=1
+export WANDB_MODE=online
 
 MODEL="facebook/opt-2.7b"
 TASK="mnli"
